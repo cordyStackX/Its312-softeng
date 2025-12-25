@@ -6,6 +6,14 @@ import { db } from "../server.js"; // Use the pool from server.js
 
 const router = express.Router();
 
+// Helper to resolve user id from session or header (fallback for API clients)
+const resolveUserId = (req) => {
+  if (req.user && req.user.id) return req.user.id;
+  const headerId = req.headers['x-user-id'] || req.headers['x_user_id'];
+  if (headerId) return Number(headerId);
+  return null;
+};
+
 // -------------------------------
 // Multer setup for file uploads
 // -------------------------------
@@ -50,9 +58,19 @@ router.post("/", cpUpload, async (req, res) => {
     const body = req.body;
     const files = req.files || {};
 
-    // Extract user ID from session or headers
-    const userId = req.user?.id || req.headers["x-user-id"];
+    // Resolve user ID (session preferred, header fallback)
+    const userId = resolveUserId(req);
     if (!userId) return res.status(401).json({ message: "Unauthorized: Missing user ID" });
+
+    // Block admins from submitting applications
+    const [[userRow]] = await db.query("SELECT role FROM users WHERE id = ? LIMIT 1", [userId]);
+    if (userRow && userRow.role === 'admin') return res.status(403).json({ message: "Admins cannot submit applications" });
+
+    // Enforce only one application per user
+    const [existingApps] = await db.query("SELECT id FROM applications WHERE user_id = ? LIMIT 1", [userId]);
+    if (existingApps.length > 0) {
+      return res.status(409).json({ message: "Only one application allowed per account" });
+    }
 
     // Map uploaded files
     const filePaths = {};
@@ -112,8 +130,12 @@ router.post("/draft", cpUpload, async (req, res) => {
   try {
     const body = req.body;
     const files = req.files || {};
-    const userId = req.user?.id || req.headers["x-user-id"];
+    const userId = resolveUserId(req);
     if (!userId) return res.status(401).json({ message: "Unauthorized: Missing user ID" });
+
+    // Block admins from saving drafts
+    const [[roleRow]] = await db.query("SELECT role FROM users WHERE id = ? LIMIT 1", [userId]);
+    if (roleRow && roleRow.role === 'admin') return res.status(403).json({ message: "Admins cannot submit applications" });
 
     // Map uploaded files
     const filePaths = {};
@@ -178,6 +200,10 @@ router.post("/draft", cpUpload, async (req, res) => {
       return res.json({ message: "Draft updated", draftId });
     }
 
+    // Ensure user has no other application (only 1 application per account)
+    const [anyApps] = await db.query(`SELECT id FROM applications WHERE user_id = ? LIMIT 1`, [userId]);
+    if (anyApps.length > 0) return res.status(409).json({ message: 'Only one application allowed per account' });
+
     // Insert new draft with status 'Draft'
     const [insertRes] = await db.query(
       `INSERT INTO applications
@@ -223,7 +249,7 @@ router.post("/draft", cpUpload, async (req, res) => {
 // -------------------------------
 router.get("/drafts", async (req, res) => {
   try {
-    const userId = req.user?.id || req.headers["x-user-id"];
+    const userId = resolveUserId(req);
     if (!userId) return res.status(401).json({ message: "Unauthorized" });
     const [rows] = await db.query(`SELECT * FROM applications WHERE user_id = ? AND status = 'Draft' ORDER BY created_at DESC`, [userId]);
     res.json(rows);
@@ -238,7 +264,7 @@ router.delete('/drafts/:id', async (req, res) => {
   try {
     console.log('DELETE /submit_application/drafts called with id=', req.params.id, 'headers=', req.headers);
     const draftId = req.params.id;
-    const userId = req.user?.id || req.headers['x-user-id'];
+    const userId = resolveUserId(req);
     if (!userId) return res.status(401).json({ message: 'Unauthorized' });
 
     const [rows] = await db.query(`SELECT * FROM applications WHERE id = ? AND user_id = ? AND status = 'Draft'`, [draftId, userId]);

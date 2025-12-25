@@ -19,6 +19,7 @@ import AdminSettings from "./components/AdminSettings";
 import Notifications from "./components/Notifications";
 import ApplicationDetails from "./components/ApplicationDetails";
 import MyDrafts from "./components/MyDrafts";
+import MyApplication from "./components/MyApplication"; // New import for MyApplication
 
 // User Context
 import { UserProvider } from "./components/UserContext";
@@ -46,6 +47,7 @@ function AnimatedRoutes() {
               <Route path="/my-drafts" element={<MyDrafts />} />
               <Route path="/faqs" element={<FAQ />} />
 
+              <Route path="/my-application" element={<MyApplication />} /> {/* New route for My Application */}
               <Route path="/notifications" element={<Notifications />} />
               <Route path="/applications/:id" element={<ApplicationDetails />} />
 

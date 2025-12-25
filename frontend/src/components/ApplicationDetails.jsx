@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from "react";
 import axios from "axios";
 import { useParams, useLocation, useNavigate } from "react-router-dom";
-import { FaFileAlt, FaFilePdf, FaImage, FaCheckCircle, FaUpload, FaChevronDown, FaChevronUp } from "react-icons/fa";
+import { FaFileAlt, FaFilePdf, FaImage, FaCheckCircle, FaUpload } from "react-icons/fa";
 
 const DOCUMENTS = [
   { key: "letter_of_intent", label: "Letter of Intent" },
@@ -29,7 +29,7 @@ function ApplicationDetails() {
   const [verified, setVerified] = useState({});
   const [uploadingDoc, setUploadingDoc] = useState(null);
   const [fileInputs, setFileInputs] = useState({});
-  const [collapsed, setCollapsed] = useState({});
+  
 
   const user = JSON.parse(localStorage.getItem("user"));
 
@@ -86,21 +86,7 @@ function ApplicationDetails() {
     setFileInputs((prev) => ({ ...prev, [key]: file }));
   };
 
-  const toggleCollapsed = (key) => {
-    setCollapsed((p) => ({ ...p, [key]: !p[key] }));
-  };
-
-  const expandAll = () => {
-    const obj = {};
-    DOCUMENTS.forEach((d) => (obj[d.key] = false));
-    setCollapsed(obj);
-  };
-
-  const collapseAll = () => {
-    const obj = {};
-    DOCUMENTS.forEach((d) => (obj[d.key] = true));
-    setCollapsed(obj);
-  };
+  // collapsed UI removed for cleaner interface
 
   const handleResubmit = async (key) => {
     if (!fileInputs[key]) return alert("Choose a file to upload");
@@ -129,6 +115,8 @@ function ApplicationDetails() {
 
   if (!app) return <div className="p-8">Loading application...</div>;
 
+  const statusLower = String(app.status || "").toLowerCase();
+  const readOnly = statusLower.includes("accept") || statusLower.includes("reject");
   return (
     <main className="max-w-4xl mx-auto px-4 py-20">
       <div className="bg-white rounded-lg shadow p-6">
@@ -145,12 +133,8 @@ function ApplicationDetails() {
 
         <section className="mt-6">
           <h2 className="font-semibold mb-2">Documents & Progress</h2>
-          <div className="mb-3 flex items-center justify-between">
+          <div className="mb-3">
             <div className="text-sm text-gray-600">Showing {DOCUMENTS.length} documents</div>
-            <div className="flex items-center gap-2">
-              <button onClick={expandAll} className="text-sm text-blue-600 hover:underline">Expand All</button>
-              <button onClick={collapseAll} className="text-sm text-gray-600 hover:underline">Collapse All</button>
-            </div>
           </div>
 
           <div className="grid gap-3 grid-cols-1 md:grid-cols-2">
@@ -160,7 +144,7 @@ function ApplicationDetails() {
               const verifiedFlag = verified[`${d.key}_verified`];
               return (
                 <div id={`doc-${d.key}`} key={d.key} className="p-4 border rounded">
-                  <div className="flex items-center justify-between">
+                    <div className="flex items-center justify-between">
                     <div className="flex items-center gap-3">
                       {/* Icon mapping */}
                       <span className="text-gray-600">
@@ -168,40 +152,53 @@ function ApplicationDetails() {
                       </span>
                       <div>
                         <div className="font-medium">{d.label}</div>
-                        <div className="text-xs text-gray-600 mt-1">{val ? (<a href={`http://localhost:5000/${val.replace(/^\//, "")}`} target="_blank" rel="noreferrer" className="text-blue-600 underline">View file</a>) : (<span className="text-gray-500">Not uploaded</span>)}</div>
-                        {remark && <div className="text-sm text-yellow-700 mt-1">Remark: {remark}</div>}
-                        {verifiedFlag && <div className="text-xs text-green-600 mt-1">Verified</div>}
+                        <div className="text-xs mt-1">
+                          {val ? (
+                            <a href={`http://localhost:5000/${val.replace(/^\//, "")}`} target="_blank" rel="noreferrer" className="text-blue-600 underline">View file</a>
+                          ) : (
+                            <span className="text-gray-500">Not uploaded</span>
+                          )}
+                        </div>
+                        <div className="mt-2">
+                          {val ? (
+                            <span className="inline-flex items-center px-2 py-1 rounded text-xs bg-green-100 text-green-800">Uploaded</span>
+                          ) : (
+                            <span className="inline-flex items-center px-2 py-1 rounded text-xs bg-red-100 text-red-800">Missing</span>
+                          )}
+                        </div>
+                          {remark && <div className="text-sm text-yellow-700 mt-1">Remark: {remark}</div>}
+                          {verifiedFlag && <div className="text-xs text-green-600 mt-1">Verified</div>}
                       </div>
                     </div>
 
-                    <button onClick={() => toggleCollapsed(d.key)} className="p-1 rounded hover:bg-gray-100">
-                      {collapsed[d.key] ? <FaChevronDown /> : <FaChevronUp />}
-                    </button>
+                    {/* dropdown removed for clean UI */}
                   </div>
-
-                  {!collapsed[d.key] && (
-                    <div className="mt-3 flex flex-col md:flex-row md:justify-between md:items-center gap-3">
+                  <div className="mt-3 flex flex-col md:flex-row md:justify-between md:items-center gap-3">
                       <div className="md:flex-1">
                         {/* optional extra description could go here */}
                       </div>
 
-                      <div className="flex flex-col items-stretch gap-2 md:items-end md:w-auto w-full">
-                        <label className="w-full md:w-auto">
-                          <input id={`file-input-${d.key}`} className="hidden" type="file" accept=".pdf,.jpg,.jpeg,.png" onChange={(e) => handleFileChange(d.key, e.target.files[0])} />
-                          <div className="flex items-center justify-between gap-2">
-                            <button type="button" onClick={() => document.getElementById(`file-input-${d.key}`).click()} className="px-3 py-2 bg-gray-100 border rounded text-sm hover:bg-gray-200">
-                              Choose file
-                            </button>
-                            <div className="text-sm text-gray-700">{fileInputs[d.key]?.name || "No file chosen"}</div>
-                          </div>
-                        </label>
+                      {/* Hide upload/resubmit controls when application is accepted/rejected */}
+                      {!readOnly ? (
+                        <div className="flex flex-col items-stretch gap-2 md:items-end md:w-auto w-full">
+                          <label className="w-full md:w-auto">
+                            <input id={`file-input-${d.key}`} className="hidden" type="file" accept=".pdf,.jpg,.jpeg,.png" onChange={(e) => handleFileChange(d.key, e.target.files[0])} />
+                            <div className="flex items-center justify-between gap-2">
+                              <button type="button" onClick={() => document.getElementById(`file-input-${d.key}`).click()} className="px-3 py-2 bg-gray-100 border rounded text-sm hover:bg-gray-200">
+                                Choose file
+                              </button>
+                              <div className="text-sm text-gray-700">{fileInputs[d.key]?.name || "No file chosen"}</div>
+                            </div>
+                          </label>
 
-                        <button disabled={!fileInputs[d.key] || uploadingDoc === d.key} onClick={() => handleResubmit(d.key)} className="px-3 py-2 bg-blue-600 text-white rounded text-sm w-full md:w-auto">
-                          {uploadingDoc === d.key ? "Uploading..." : (val ? "Resubmit" : "Upload")}
-                        </button>
-                      </div>
+                          <button disabled={!fileInputs[d.key] || uploadingDoc === d.key} onClick={() => handleResubmit(d.key)} className="px-3 py-2 bg-blue-600 text-white rounded text-sm w-full md:w-auto">
+                            {uploadingDoc === d.key ? "Uploading..." : (val ? "Resubmit" : "Upload")}
+                          </button>
+                        </div>
+                      ) : (
+                        <div className="text-sm text-gray-500">This application is read-only.</div>
+                      )}
                     </div>
-                  )}
                 </div>
               );
             })}
@@ -209,7 +206,7 @@ function ApplicationDetails() {
         </section>
 
         <div className="mt-6 flex justify-end gap-3">
-          {user && String(user.id) === String(app.user_id) && (
+          {user && String(user.id) === String(app.user_id) && !statusLower.includes('accept') && (
             <button
               onClick={async () => {
                 if (!window.confirm('Delete this application? This cannot be undone.')) return;

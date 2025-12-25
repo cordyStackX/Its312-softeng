@@ -12,6 +12,13 @@ import db from "../config/db.js"; // promise-based pool
 dotenv.config();
 const router = express.Router();
 
+// Ensure table for tracking active sessions exists
+db.query(`CREATE TABLE IF NOT EXISTS user_sessions (
+  user_id INT PRIMARY KEY,
+  session_id VARCHAR(255),
+  updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+)`).catch((err) => console.error("user_sessions table error:", err));
+
 // -----------------------------
 // Utilities
 // -----------------------------
@@ -48,59 +55,9 @@ const createAdmin = async () => {
       console.log("Admin account already exists:", adminEmail);
     }
   } catch (err) {
-    console.error("createAdmin error:", err);
+    console.error("Create admin error:", err);
   }
 };
-createAdmin();
-
-// -----------------------------
-// Passport Google OAuth
-// -----------------------------
-passport.use(
-  new GoogleStrategy(
-    {
-      clientID: process.env.GOOGLE_CLIENT_ID,
-      clientSecret: process.env.GOOGLE_CLIENT_SECRET,
-      callbackURL: process.env.GOOGLE_CALLBACK_URL || "http://localhost:5000/auth/google/callback",
-      passReqToCallback: true,
-    },
-    async (req, accessToken, refreshToken, profile, done) => {
-      try {
-        const email = profile.emails?.[0]?.value;
-        const fullname = profile.displayName;
-        const googleId = profile.id;
-
-        if (!email) return done(new Error("No email returned by Google"), null);
-
-        const [rows] = await db.query("SELECT * FROM users WHERE email = ?", [email]);
-
-        if (rows.length > 0) {
-          await logActivity(rows[0].id, rows[0].role, "google_login", "Logged in with Google");
-          return done(null, rows[0]);
-        }
-
-        // If signup flow was initiated, create a new user linked to this Google account
-        const isSignup = (req.session && req.session.googleSignup) || (req.query && req.query.signup === 'true');
-        if (req.session && req.session.googleSignup) delete req.session.googleSignup;
-        if (isSignup) {
-          const randomPass = crypto.randomBytes(16).toString('hex');
-          const hashedPassword = await bcrypt.hash(randomPass, 10);
-          const [result] = await db.query(
-            "INSERT INTO users (fullname, email, password, role, google_id) VALUES (?, ?, ?, ?, ?)",
-            [fullname, email, hashedPassword, 'user', googleId]
-          );
-          const [newRows] = await db.query("SELECT * FROM users WHERE id = ?", [result.insertId]);
-          await logActivity(result.insertId, 'user', 'google_signup', `User signed up with Google: ${email}`);
-          return done(null, newRows[0]);
-        }
-
-        return done(null, false, { message: "Email not registered" });
-      } catch (err) {
-        return done(err, null);
-      }
-    }
-  )
-);
 
 passport.serializeUser((user, done) => done(null, user.id));
 passport.deserializeUser(async (id, done) => {
@@ -131,8 +88,41 @@ router.post("/signup", async (req, res) => {
       [fullname, email, hashedPassword, "user"]
     );
 
-    await logActivity(result.insertId, "user", "signup", `User signed up: ${email}`);
-    res.json({ success: true, message: "Signup successful!" });
+    // fetch created user
+    const [rows] = await db.query("SELECT * FROM users WHERE id = ?", [result.insertId]);
+    const newUser = rows[0];
+
+    // Auto-login the new user (establish session)
+    req.login(newUser, async (err) => {
+      if (err) {
+        console.error('req.login error during signup:', err);
+        // still return success but ask user to login
+        await logActivity(result.insertId, "user", "signup", `User signed up but login failed: ${email}`);
+        return res.json({ success: true, message: "Signup successful! Please login." });
+      }
+
+      // Enforce single active session for signup too
+      try {
+        const [rows] = await db.query("SELECT session_id FROM user_sessions WHERE user_id = ?", [newUser.id]);
+        if (rows.length > 0 && rows[0].session_id && rows[0].session_id !== req.sessionID) {
+          try { req.sessionStore.destroy(rows[0].session_id, () => {}); } catch (e) { console.error('destroy prev session on signup', e); }
+        }
+        await db.query("INSERT INTO user_sessions (user_id, session_id) VALUES (?, ?) ON DUPLICATE KEY UPDATE session_id = VALUES(session_id)", [newUser.id, req.sessionID]);
+      } catch (e) {
+        console.error('user_sessions update error (signup):', e);
+      }
+
+      try {
+        await logActivity(result.insertId, "user", "signup", `User signed up: ${email}`);
+      } catch (e) {
+        console.error('logActivity error after signup:', e);
+      }
+
+      // remove sensitive fields
+      if (newUser.password) delete newUser.password;
+
+      res.json({ success: true, message: "Signup successful", user: newUser });
+    });
   } catch (err) {
     console.error("Signup error:", err);
     res.status(500).json({ message: "Server error" });
@@ -158,11 +148,21 @@ router.post("/login", async (req, res) => {
 
     delete user.password;
 
-    // Establish session with passport
-    req.login(user, async (err) => {
-      if (err) {
-        console.error("req.login error:", err);
-        return res.status(500).json({ message: "Login failed" });
+    // Establish session manually to avoid passport session regenerate errors
+    try {
+      const safeUser = { ...user };
+      if (safeUser.password) delete safeUser.password;
+      if (req.session) req.session.user = safeUser;
+
+      // Enforce single active session: destroy previous session if exists
+      try {
+        const [rows] = await db.query("SELECT session_id FROM user_sessions WHERE user_id = ?", [user.id]);
+        if (rows.length > 0 && rows[0].session_id && rows[0].session_id !== req.sessionID) {
+          try { req.sessionStore.destroy(rows[0].session_id, () => {}); } catch (e) { console.error('destroy prev session', e); }
+        }
+        await db.query("INSERT INTO user_sessions (user_id, session_id) VALUES (?, ?) ON DUPLICATE KEY UPDATE session_id = VALUES(session_id)", [user.id, req.sessionID]);
+      } catch (e) {
+        console.error('user_sessions update error:', e);
       }
 
       try {
@@ -171,12 +171,31 @@ router.post("/login", async (req, res) => {
         console.error("logActivity error after login:", e);
       }
 
-      // Return user info; session cookie is set via express-session
-      res.json({ success: true, message: "Login successful", user });
-    });
+      res.json({ success: true, message: "Login successful", user: safeUser });
+    } catch (errLogin) {
+      console.error('login session error:', errLogin);
+      res.status(500).json({ message: 'Login failed' });
+    }
   } catch (err) {
     console.error("Login error:", err);
     res.status(500).json({ message: "Server error" });
+  }
+});
+
+// LOGOUT
+router.post('/logout', async (req, res) => {
+  try {
+    const userId = req.user?.id;
+    if (userId) {
+      await db.query('DELETE FROM user_sessions WHERE user_id = ?', [userId]);
+    }
+
+    req.logout(() => {});
+    try { req.session.destroy(() => {}); } catch (e) {}
+    res.json({ success: true, message: 'Logged out' });
+  } catch (err) {
+    console.error('Logout error:', err);
+    res.status(500).json({ success: false, message: 'Logout failed' });
   }
 });
 
@@ -297,16 +316,22 @@ router.get(
   passport.authenticate("google", { scope: ["profile", "email"], prompt: "select_account" })
 );
 
-// Signup entrypoint: set session flag and start Google OAuth
+// Signup entrypoint: start Google OAuth and include a state flag so the callback can detect signup
 router.get('/google/signup', (req, res, next) => {
-  req.session.googleSignup = true;
-  passport.authenticate('google', { scope: ['profile', 'email'], prompt: 'select_account' })(req, res, next);
+  try {
+    if (req.session) req.session.googleSignup = true; // best-effort fallback
+  } catch (e) {
+    // ignore
+  }
+
+  passport.authenticate('google', { scope: ['profile', 'email'], prompt: 'select_account', state: 'signup' })(req, res, next);
 });
 
 router.get('/google/callback', (req, res, next) => {
-  const isSignup = (req.query && req.query.signup === 'true') || (req.session && req.session.googleSignup);
+  const isSignup = (req.query && req.query.signup === 'true') || (req.query && req.query.state === 'signup') || (req.session && req.session.googleSignup);
 
-  passport.authenticate('google', { failureRedirect: '/auth/failure', session: !isSignup }, async (err, user, info) => {
+  // Always create a session on successful OAuth so frontend can treat the user as logged in
+  passport.authenticate('google', { failureRedirect: '/auth/failure', session: true }, async (err, user, info) => {
     try {
       if (err) throw err;
       if (!user) {
@@ -320,24 +345,77 @@ router.get('/google/callback', (req, res, next) => {
       }
 
       if (isSignup) {
-        // Signup completed: notify opener to ask user to login
-        res.send(`
-          <script>
-            window.opener.postMessage({ message: "Signup successful. Please login." }, "*");
-            window.close();
-          </script>
-        `);
+        // Signup completed: establish session manually and send user to opener
+        try {
+          const safeUser = { ...user };
+          if (safeUser.password) delete safeUser.password;
+          if (req.session) req.session.user = safeUser;
+          // Enforce single active session for Google signup as well
+          try {
+            const [rows] = await db.query("SELECT session_id FROM user_sessions WHERE user_id = ?", [user.id]);
+            if (rows.length > 0 && rows[0].session_id && rows[0].session_id !== req.sessionID) {
+              try { req.sessionStore.destroy(rows[0].session_id, () => {}); } catch (e) { console.error('destroy prev session (google signup)', e); }
+            }
+            await db.query("INSERT INTO user_sessions (user_id, session_id) VALUES (?, ?) ON DUPLICATE KEY UPDATE session_id = VALUES(session_id)", [user.id, req.sessionID]);
+          } catch (e) {
+            console.error('user_sessions update error (google signup):', e);
+          }
+          try {
+            await logActivity(user.id, user.role, 'google_signup', 'Google signup and auto-login');
+          } catch (e) {
+            console.error('logActivity error after google signup:', e);
+          }
+
+          res.send(`
+            <script>
+              window.opener.postMessage(${JSON.stringify(safeUser)}, "*");
+              window.close();
+            </script>
+          `);
+        } catch (e) {
+          console.error('google signup session error:', e);
+          res.send(`
+            <script>
+              window.opener.postMessage({ message: "Signup succeeded but login failed. Please login manually." }, "*");
+              window.close();
+            </script>
+          `);
+        }
         return;
       }
 
-      // Normal login flow
-      await logActivity(user.id, user.role, 'google_login_callback', 'Google login callback');
-      res.send(`
-        <script>
-          window.opener.postMessage(${JSON.stringify(user)}, "*");
-          window.close();
-        </script>
-      `);
+      // Normal login flow: establish session manually and send user to opener
+      try {
+        const safeUser = { ...user };
+        if (safeUser.password) delete safeUser.password;
+        if (req.session) req.session.user = safeUser;
+        // Enforce single active session for Google login
+        try {
+          const [rows] = await db.query("SELECT session_id FROM user_sessions WHERE user_id = ?", [user.id]);
+          if (rows.length > 0 && rows[0].session_id && rows[0].session_id !== req.sessionID) {
+            try { req.sessionStore.destroy(rows[0].session_id, () => {}); } catch (e) { console.error('destroy prev session (google login)', e); }
+          }
+          await db.query("INSERT INTO user_sessions (user_id, session_id) VALUES (?, ?) ON DUPLICATE KEY UPDATE session_id = VALUES(session_id)", [user.id, req.sessionID]);
+        } catch (e) {
+          console.error('user_sessions update error (google login):', e);
+        }
+        await logActivity(user.id, user.role, 'google_login_callback', 'Google login callback');
+
+        res.send(`
+          <script>
+            window.opener.postMessage(${JSON.stringify(safeUser)}, "*");
+            window.close();
+          </script>
+        `);
+      } catch (e) {
+        console.error('google login session error:', e);
+        res.send(`
+          <script>
+            window.opener.postMessage({ message: "Login failed. Try again." }, "*");
+            window.close();
+          </script>
+        `);
+      }
     } catch (error) {
       console.error('Google callback error:', error);
       res.send(`

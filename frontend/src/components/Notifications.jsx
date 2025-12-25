@@ -57,7 +57,7 @@ function Notifications() {
                         } catch (e) {
                           console.error("Mark read failed:", e?.response?.data || e.message);
                         }
-                        navigate(`/applications/${n.application_id}?doc=${encodeURIComponent(n.document_name)}`);
+                        navigate(`/my-application?appId=${n.application_id}&doc=${encodeURIComponent(n.document_name)}`);
                       }}
                       className="px-3 py-1 bg-yellow-100 rounded text-sm"
                     >
@@ -78,7 +78,7 @@ function Notifications() {
                         } catch (e) {
                           console.error("Mark read failed:", e?.response?.data || e.message);
                         }
-                        navigate(`/applications/${n.application_id}`);
+                        navigate(`/my-application?appId=${n.application_id}`);
                       }}
                       className="px-3 py-1 bg-blue-100 rounded text-sm"
                     >

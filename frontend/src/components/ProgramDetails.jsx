@@ -376,6 +376,29 @@ function ProgramDetails() {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [location.state]);
 
+  // Prefill fullName and email from URL params or logged-in user (skip when a draft is present)
+  useEffect(() => {
+    try {
+      const draft = location.state?.draft;
+      if (draft) return; // don't override draft data
+
+      const params = new URLSearchParams(window.location.search);
+      const nameParam = params.get('fullname') || params.get('name');
+      const emailParam = params.get('email');
+
+      const stored = localStorage.getItem('user');
+      const parsed = stored ? JSON.parse(stored) : null;
+
+      setFormData((prev) => ({
+        ...prev,
+        fullName: prev.fullName || nameParam || (parsed && parsed.fullname) || "",
+        email: prev.email || emailParam || (parsed && parsed.email) || "",
+      }));
+    } catch (e) {
+      // ignore
+    }
+  }, [location.state]);
+
   // -------------------------
   // UI
   // -------------------------
@@ -413,11 +436,10 @@ function ProgramDetails() {
           />
           <input
             type="text"
-            placeholder="Phone Number"
+            placeholder="Phone Number (optional)"
             className="w-full border rounded-md px-4 py-2"
             value={formData.phone}
             onChange={(e) => setFormData({ ...formData, phone: e.target.value })}
-            required
           />
 
           <div>

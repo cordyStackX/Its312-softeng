@@ -20,6 +20,8 @@ const Signup = () => {
       const user = event.data;
       if (user && user.id) {
         console.log("Google user:", user);
+        // Persist user so the app treats them as logged in
+        try { localStorage.setItem("user", JSON.stringify(user)); } catch (e) { console.error(e); }
         setMessage({ type: "success", text: `Welcome, ${user.fullname}` });
         setTimeout(() => navigate("/"), 1500);
       } else if (user && user.message) {
@@ -78,7 +80,26 @@ const Signup = () => {
       const result = await response.json();
 
       if (response.ok) {
-        // SUCCESS MESSAGE
+        // If server returned user (auto-login), persist and navigate home
+        if (result && result.user && result.user.id) {
+          try { localStorage.setItem("user", JSON.stringify(result.user)); } catch (e) { console.error(e); }
+          setMessage({ type: "success", text: `Welcome, ${result.user.fullname}` });
+
+          // CLEAR INPUTS
+          setFullname("");
+          setEmail("");
+          setPassword("");
+          setAgreed(false);
+
+          // 🔥 ADD SIGNUP ACTIVITY LOG
+          await logSignupActivity(email);
+
+          // Navigate to homepage (full reload to ensure Navbar updates)
+          setTimeout(() => { window.location.href = '/'; }, 900);
+          return;
+        }
+
+        // SUCCESS MESSAGE (no auto-login)
         setMessage({ type: "success", text: result.message });
 
         // CLEAR INPUTS

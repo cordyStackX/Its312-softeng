@@ -52,6 +52,33 @@ app.use(
 app.use(passport.initialize());
 app.use(passport.session());
 
+// Ensure `req.user` is available when we set `req.session.user` manually
+app.use((req, res, next) => {
+  try {
+    if (!req.user && req.session && req.session.user) req.user = req.session.user;
+  } catch (e) {
+    // ignore
+  }
+  next();
+});
+
+// Global middleware: enforce single active session per user
+app.use(async (req, res, next) => {
+  try {
+    if (req.user && req.sessionID) {
+      const [rows] = await db.query("SELECT session_id FROM user_sessions WHERE user_id = ?", [req.user.id]);
+      if (rows.length > 0 && rows[0].session_id && rows[0].session_id !== req.sessionID) {
+        // current session is not the active one -> log out
+        try { req.logout(() => {}); } catch (e) {}
+        try { req.session.destroy(() => {}); } catch (e) {}
+      }
+    }
+  } catch (e) {
+    console.error('session enforcement error:', e);
+  }
+  next();
+});
+
 // -----------------------------
 // Routes
 // -----------------------------

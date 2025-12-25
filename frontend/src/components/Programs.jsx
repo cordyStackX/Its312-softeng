@@ -1,5 +1,6 @@
-import React from "react";
+import React, { useState } from "react";
 import { useNavigate } from "react-router-dom";
+import Toast from "./Toast";
 import brumaImg from "../assets/bruma.jpg";
 import ellenImg from "../assets/ellen.jpg";
 
@@ -35,13 +36,43 @@ const staff = [
 function Programs() {
   const navigate = useNavigate();
   const user = JSON.parse(localStorage.getItem("user"));
+  const [toast, setToast] = useState(null);
 
-  const handleApply = (programName) => {
+  const handleApply = async (programName) => {
     if (!user) {
       navigate("/signup", { state: { programName } });
       return;
     }
-    navigate("/program-details", { state: { programName } });
+
+    try {
+      const headers = user ? { "x-user-id": String(user.id) } : {};
+      const res = await fetch("http://localhost:5000/profile/applications", {
+        method: "GET",
+        credentials: "include",
+        headers,
+      });
+
+      if (res.status === 401) {
+        // couldn't verify via session; show message and continue to program details
+        setToast("Unable to verify application status — proceeding to apply.");
+        setTimeout(() => setToast(null), 3000);
+        navigate("/program-details", { state: { programName } });
+        return;
+      }
+
+      const data = await res.json().catch(() => []);
+      if (Array.isArray(data) && data.length > 0) {
+        setToast("Only one application is allowed per account.");
+        setTimeout(() => setToast(null), 4000);
+        return;
+      }
+
+      navigate("/program-details", { state: { programName } });
+    } catch (err) {
+      console.error("Error checking existing application:", err);
+      setToast("Unable to check application status. Try again.");
+      setTimeout(() => setToast(null), 3000);
+    }
   };
 
   return (
@@ -73,6 +104,8 @@ function Programs() {
           </div>
         ))}
       </div>
+
+      {toast && <Toast message={toast} type="error" onClose={() => setToast(null)} />}
 
       {/* ---------------------- */}
       {/* Coordinators (previously Faculty) - moved below programs */}
