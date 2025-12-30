@@ -54,10 +54,15 @@ function AdminApplicants() {
   const [supportedDocStatusKeys, setSupportedDocStatusKeys] = useState([]);
   const [statusFilter, setStatusFilter] = useState("All");
   const [programFilter, setProgramFilter] = useState("All");
-  const [completenessFilter, setCompletenessFilter] = useState("All"); // All, Complete, Incomplete
 
-  // derived program list
-  const programs = Array.from(new Set(applicants.map(a => a.program_name).filter(Boolean))).sort();
+  // derived program list (include additional known programs)
+  const EXTRA_PROGRAMS = [
+    "Bachelor of Science in Business Administration - Marketing Management"
+  ];
+  const programs = Array.from(new Set([
+    ...applicants.map(a => a.program_name).filter(Boolean),
+    ...EXTRA_PROGRAMS
+  ])).sort();
 
   const showToast = (message, type = "success") => {
     setToast({ message, type });
@@ -245,12 +250,12 @@ function AdminApplicants() {
 
     const matchesProgram = programFilter === 'All' ? true : String(a.program_name) === programFilter;
 
-    // Completeness: all FILE_COLUMNS present
+    // Completeness: all FILE_COLUMNS present (kept for potential future use)
     const uploadedFiles = FILE_COLUMNS.filter(f => a[f]);
     const isComplete = uploadedFiles.length > 0 && uploadedFiles.length === FILE_COLUMNS.length;
-    const matchesCompleteness = completenessFilter === 'All' ? true : completenessFilter === 'Complete' ? isComplete : !isComplete;
 
-    return matchesSearch && matchesStatus && matchesProgram && matchesCompleteness;
+    // Exclude Draft applications from the admin list
+    return matchesSearch && matchesStatus && matchesProgram && a.status !== 'Draft';
   });
 
   // --- REMARK FUNCTIONS ---
@@ -411,11 +416,7 @@ function AdminApplicants() {
             </select>
           </div>
 
-          <select value={completenessFilter} onChange={e => setCompletenessFilter(e.target.value)} className="border px-3 py-2 rounded-lg text-sm bg-white">
-            <option value="All">All (Completeness)</option>
-            <option value="Complete">Complete (all required files uploaded)</option>
-            <option value="Incomplete">Incomplete (missing files)</option>
-          </select>
+
 
 
         </div>
@@ -438,7 +439,7 @@ function AdminApplicants() {
           </thead>
           <tbody>
             {filtered.map(a => {
-              const isLocked = a.status === "Accepted";
+              const isLocked = a.status === "Accepted" || a.status === "Rejected";
               return (
                 <tr key={a.id} className="border-b hover:bg-gray-50 cursor-pointer" onClick={() => setShowView(a)}>
                   <td className="p-2">{a.full_name}</td>
@@ -457,22 +458,17 @@ function AdminApplicants() {
                   <td className="p-2 text-center">{FILE_COLUMNS.filter(f => a[f]).length}</td>
                   <td className="p-2 text-center flex justify-center gap-2" onClick={e => e.stopPropagation()}>
                     <button disabled={isLocked} onClick={() => acceptRejectApplicant(a.id, "Accepted")}
-                      title={isLocked ? "Actions locked for accepted applicants" : "Accept"}
+                      title={isLocked ? "Actions locked for accepted or rejected applicants" : "Accept"}
                       className={`text-green-600 hover:text-green-800 px-2 py-1 rounded bg-green-50 disabled:opacity-50 disabled:cursor-not-allowed`}>
                       Accept
                     </button>
                     <button disabled={isLocked} onClick={() => acceptRejectApplicant(a.id, "Rejected")}
-                      title={isLocked ? "Actions locked for accepted applicants" : "Reject"}
+                      title={isLocked ? "Actions locked for accepted or rejected applicants" : "Reject"}
                       className={`text-red-600 hover:text-red-800 px-2 py-1 rounded bg-red-50 disabled:opacity-50 disabled:cursor-not-allowed`}>
                       Reject
                     </button>
-                    <button disabled={isLocked} onClick={() => acceptRejectApplicant(a.id, "Pending")}
-                      title={isLocked ? "Actions locked for accepted applicants" : "Pending"}
-                      className={`text-yellow-600 hover:text-yellow-800 px-2 py-1 rounded bg-yellow-50 disabled:opacity-50 disabled:cursor-not-allowed`}>
-                      Pending
-                    </button>
                     <button disabled={isLocked} onClick={() => confirmDelete(a.id)}
-                      title={isLocked ? "Actions locked for accepted applicants" : "Delete applicant"}
+                      title={isLocked ? "Actions locked for accepted or rejected applicants" : "Delete applicant"}
                       className="text-red-600 hover:text-red-800 disabled:opacity-50 disabled:cursor-not-allowed">
                       <Trash2 size={16} />
                     </button>
@@ -487,7 +483,7 @@ function AdminApplicants() {
       {/* MOBILE LIST */}
       <div className="md:hidden space-y-3">
         {filtered.map(a => {
-          const isLocked = a.status === "Accepted";
+          const isLocked = a.status === "Accepted" || a.status === "Rejected";
           return (
             <div key={a.id}
               className="border rounded-lg p-4 shadow-sm bg-white cursor-pointer hover:bg-gray-50"
@@ -502,22 +498,17 @@ function AdminApplicants() {
               }`}>{a.status}</div>
                 <div className="mt-2 flex justify-end gap-2" onClick={e => e.stopPropagation()}>
                   <button disabled={isLocked} onClick={() => acceptRejectApplicant(a.id, "Accepted")}
-                    title={isLocked ? "Actions locked for accepted applicants" : "Accept"}
+                    title={isLocked ? "Actions locked for accepted or rejected applicants" : "Accept"}
                     className="text-green-600 hover:text-green-800 px-2 py-1 rounded bg-green-50 disabled:opacity-50 disabled:cursor-not-allowed">
                     Accept
                   </button>
                   <button disabled={isLocked} onClick={() => acceptRejectApplicant(a.id, "Rejected")}
-                    title={isLocked ? "Actions locked for accepted applicants" : "Reject"}
+                    title={isLocked ? "Actions locked for accepted or rejected applicants" : "Reject"}
                     className="text-red-600 hover:text-red-800 px-2 py-1 rounded bg-red-50 disabled:opacity-50 disabled:cursor-not-allowed">
                     Reject
                   </button>
-                  <button disabled={isLocked} onClick={() => acceptRejectApplicant(a.id, "Pending")}
-                    title={isLocked ? "Actions locked for accepted applicants" : "Pending"}
-                    className="text-yellow-600 hover:text-yellow-800 px-2 py-1 rounded bg-yellow-50 disabled:opacity-50 disabled:cursor-not-allowed">
-                    Pending
-                  </button>
                 <button disabled={isLocked} onClick={() => confirmDelete(a.id)}
-                  title={isLocked ? "Actions locked for accepted applicants" : "Delete applicant"}
+                  title={isLocked ? "Actions locked for accepted or rejected applicants" : "Delete applicant"}
                   className="text-red-600 hover:text-red-800 disabled:opacity-50 disabled:cursor-not-allowed">
                   <Trash2 size={16} />
                 </button>
