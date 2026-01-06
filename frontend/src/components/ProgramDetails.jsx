@@ -609,7 +609,7 @@ function ProgramDetails() {
 
       {/* Review Modal */}
       {showModal && (
-        <div className="fixed inset-0 bg-black bg-opacity-50 flex justify-center items-center p-4 z-50">
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex justify-center items-center p-4 z-[99999]">
           <div className="bg-white rounded-xl p-6 max-w-4xl w-full max-h-[90vh] overflow-hidden">
             <h2 className="text-2xl font-bold text-blue-800 mb-4">Review Your Application</h2>
             <div className="max-h-[70vh] overflow-y-auto space-y-4 border-t border-b py-4">
