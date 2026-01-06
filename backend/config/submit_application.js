@@ -66,10 +66,41 @@ router.post("/", cpUpload, async (req, res) => {
     const [[userRow]] = await db.query("SELECT role FROM users WHERE id = ? LIMIT 1", [userId]);
     if (userRow && userRow.role === 'admin') return res.status(403).json({ message: "Admins cannot submit applications" });
 
-    // Enforce only one application per user
-    const [existingApps] = await db.query("SELECT id FROM applications WHERE user_id = ? LIMIT 1", [userId]);
+    // If this request includes a draft_id, attempt to convert that draft into a submitted application
+    if (body.draft_id) {
+      const draftId = body.draft_id;
+      // Ensure draft exists and is owned by this user
+      const [rows] = await db.query(`SELECT * FROM applications WHERE id = ? AND user_id = ? AND status = 'Draft' LIMIT 1`, [draftId, userId]);
+      if (!rows.length) return res.status(404).json({ message: 'Draft not found or not owned by user' });
+
+      // Build update similar to save-draft but set status to Pending (or Submitted)
+      const fields = [];
+      const values = [];
+      if (body.full_name) { fields.push("full_name = ?"); values.push(body.full_name); }
+      if (body.email) { fields.push("email = ?"); values.push(body.email); }
+      if (body.phone) { fields.push("phone = ?"); values.push(body.phone); }
+      if (body.marital_status) { fields.push("marital_status = ?"); values.push(body.marital_status); }
+      if (body.is_business_owner) { fields.push("is_business_owner = ?"); values.push(body.is_business_owner); }
+      if (body.business_name) { fields.push("business_name = ?"); values.push(body.business_name); }
+
+      // files
+      Object.keys(filePaths).forEach(k => { if (filePaths[k]) { fields.push(`${k} = ?`); values.push(filePaths[k]); } });
+
+      // set status to Pending
+      fields.push("status = ?"); values.push('Pending');
+
+      values.push(draftId);
+      const [result] = await db.query(`UPDATE applications SET ${fields.join(", ")} WHERE id = ?`, values);
+      if (result.affectedRows === 0) return res.status(500).json({ message: 'Failed to submit draft' });
+
+      // Return success
+      return res.json({ message: 'Draft submitted successfully', applicationId: draftId });
+    }
+
+    // Enforce only one application per user (exclude drafts) - allow operation only if there is no non-draft application
+    const [existingApps] = await db.query("SELECT id FROM applications WHERE user_id = ? AND (status IS NULL OR status != 'Draft') LIMIT 1", [userId]);
     if (existingApps.length > 0) {
-      return res.status(409).json({ message: "Only one application allowed per account" });
+      return res.status(409).json({ message: "Only one submitted application allowed per account" });
     }
 
     // Map uploaded files
@@ -256,6 +287,23 @@ router.get("/drafts", async (req, res) => {
   } catch (err) {
     console.error("Error fetching drafts:", err);
     res.status(500).json({ message: "Server error" });
+  }
+});
+
+// -------------------------------
+// Get a single draft by id (owned by the user)
+// -------------------------------
+router.get('/drafts/:id', async (req, res) => {
+  try {
+    const draftId = req.params.id;
+    const userId = resolveUserId(req);
+    if (!userId) return res.status(401).json({ message: 'Unauthorized' });
+    const [rows] = await db.query(`SELECT * FROM applications WHERE id = ? AND user_id = ? AND status = 'Draft' LIMIT 1`, [draftId, userId]);
+    if (!rows.length) return res.status(404).json({ message: 'Draft not found' });
+    res.json(rows[0]);
+  } catch (err) {
+    console.error('Error fetching draft by id:', err);
+    res.status(500).json({ message: 'Server error' });
   }
 });
 

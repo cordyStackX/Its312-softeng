@@ -51,6 +51,10 @@ function ProgramDetails() {
   const [imagePreview, setImagePreview] = useState(null);
   const [showModal, setShowModal] = useState(false);
 
+  // draft loading state - used to prevent opening the Review modal before draft data is loaded
+  const [draftLoading, setDraftLoading] = useState(false);
+  const [pendingOpenReview, setPendingOpenReview] = useState(false);
+
   const maxFileSize = 50 * 1024 * 1024; // 50MB
   const acceptedTypes = ["application/pdf", "image/jpeg", "image/png"];
 
@@ -195,7 +199,13 @@ function ProgramDetails() {
   };
 
   const handleReview = (e) => {
-    e.preventDefault();
+    // guard against being called without an event (e.g. programmatically)
+    if (e && e.preventDefault) e.preventDefault();
+    if (draftLoading) {
+      // if a draft is being loaded, set pending so we'll open after load finishes
+      setPendingOpenReview(true);
+      return;
+    }
     setShowModal(true);
   };
 
@@ -240,6 +250,9 @@ function ProgramDetails() {
       // Attach user id from localStorage so backend can associate the application
       const storedUser = localStorage.getItem("user");
       const userId = storedUser ? JSON.parse(storedUser).id : null;
+
+      // If we're submitting a draft, include the draft id so backend converts that draft instead of creating a new row
+      if (draftId) data.append('draft_id', draftId);
 
       const res = await fetch("http://localhost:5000/submit_application", {
         method: "POST",
@@ -328,51 +341,80 @@ function ProgramDetails() {
     }
   };
 
-  // If navigated with a draft in location.state, populate formData
+  // If navigated with a draft in location.state, populate formData (fetch latest server copy when possible)
   useEffect(() => {
     const draft = location.state?.draft;
     if (!draft) return;
-    setDraftId(draft.id || null);
-    const map = { ...initialFormData };
-    // simple mapping of fields
-    if (draft.full_name) map.fullName = draft.full_name;
-    if (draft.email) map.email = draft.email;
-    if (draft.phone) map.phone = draft.phone;
-    if (draft.marital_status) map.maritalStatus = draft.marital_status;
-    if (typeof draft.is_business_owner !== 'undefined') map.isBusinessOwner = draft.is_business_owner ? 'Yes' : 'No';
-    if (draft.business_name) map.businessName = draft.business_name;
 
-    // file fields (paths) - assign string path so preview shows filename
-    const fileMap = {
-      letter_of_intent: 'letterOfIntent',
-      resume: 'resume',
-      picture: 'picture',
-      application_form: 'applicationForm',
-      recommendation_letter: 'recommendationLetter',
-      school_credentials: 'schoolCredentials',
-      high_school_diploma: 'highSchoolDiploma',
-      transcript: 'transcript',
-      birth_certificate: 'birthCertificate',
-      employment_certificate: 'employmentCertificate',
-      nbi_clearance: 'nbiClearance',
-      marriage_certificate: 'marriageCertificate',
-      business_registration: 'businessRegistration',
-      certificates: 'certificates',
-    };
+    const loadDraft = async () => {
+      setDraftLoading(true);
+      let finalDraft = draft;
 
-    Object.keys(fileMap).forEach(k => {
-      if (draft[k]) {
-        const target = fileMap[k];
-        // multiple vs single
-        if (['employment_certificate','certificates'].includes(k)) {
-          map[target] = [draft[k]]; // keep as array of path strings
-        } else {
-          map[target] = draft[k];
+      // If we have an id, fetch the latest draft from the server to ensure up-to-date data
+      if (draft.id) {
+        try {
+          const stored = localStorage.getItem('user');
+          const userId = stored ? JSON.parse(stored).id : null;
+          const res = await fetch(`http://localhost:5000/submit_application/drafts/${draft.id}`, {
+            credentials: 'include',
+            headers: userId ? { 'x-user-id': String(userId) } : {},
+          });
+          if (res.ok) {
+            finalDraft = await res.json();
+          } else {
+            console.warn('Failed to fetch latest draft from server, using provided draft state');
+          }
+        } catch (err) {
+          console.error('Error fetching draft by id:', err);
         }
       }
-    });
 
-    setFormData(map);
+      setDraftId(finalDraft.id || null);
+      const map = { ...initialFormData };
+      // simple mapping of fields
+      if (finalDraft.full_name) map.fullName = finalDraft.full_name;
+      if (finalDraft.email) map.email = finalDraft.email;
+      if (finalDraft.phone) map.phone = finalDraft.phone;
+      if (finalDraft.marital_status) map.maritalStatus = finalDraft.marital_status;
+      if (typeof finalDraft.is_business_owner !== 'undefined') map.isBusinessOwner = finalDraft.is_business_owner ? 'Yes' : 'No';
+      if (finalDraft.business_name) map.businessName = finalDraft.business_name;
+
+      // file fields (paths) - assign string path so preview shows filename
+      const fileMap = {
+        letter_of_intent: 'letterOfIntent',
+        resume: 'resume',
+        picture: 'picture',
+        application_form: 'applicationForm',
+        recommendation_letter: 'recommendationLetter',
+        school_credentials: 'schoolCredentials',
+        high_school_diploma: 'highSchoolDiploma',
+        transcript: 'transcript',
+        birth_certificate: 'birthCertificate',
+        employment_certificate: 'employmentCertificate',
+        nbi_clearance: 'nbiClearance',
+        marriage_certificate: 'marriageCertificate',
+        business_registration: 'businessRegistration',
+        certificates: 'certificates',
+      };
+
+      Object.keys(fileMap).forEach(k => {
+        if (finalDraft[k]) {
+          const target = fileMap[k];
+          // multiple vs single
+          if (['employment_certificate','certificates'].includes(k)) {
+            map[target] = [finalDraft[k]]; // keep as array of path strings
+          } else {
+            map[target] = finalDraft[k];
+          }
+        }
+      });
+
+      setFormData(map);
+      setDraftLoading(false);
+    };
+
+    loadDraft();
+
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [location.state]);
 
@@ -398,6 +440,46 @@ function ProgramDetails() {
       // ignore
     }
   }, [location.state]);
+
+  // Auto-open review modal if navigated with { openReview: true } or { review: true } in location.state
+  useEffect(() => {
+    const openReview = location.state?.openReview || location.state?.review;
+    if (openReview) {
+      // if draft is still loading, defer opening until load finishes
+      if (draftLoading) setPendingOpenReview(true);
+      else setShowModal(true);
+      // clear the state so returning/back doesn't reopen the modal unintentionally
+      navigate(location.pathname, { replace: true });
+    }
+  }, [location.state, navigate, location.pathname, draftLoading]);
+
+  // When draft load finishes, open the review modal if it was requested while loading
+  useEffect(() => {
+    if (!draftLoading && pendingOpenReview) {
+      setPendingOpenReview(false);
+      setShowModal(true);
+    }
+  }, [draftLoading, pendingOpenReview]);
+
+  // Prevent background scrolling when the review modal is open
+  useEffect(() => {
+    if (showModal) {
+      // save previous styles
+      const prevOverflow = document.body.style.overflow;
+      const prevPaddingRight = document.body.style.paddingRight;
+
+      // hide body scroll and compensate for scrollbar width to avoid layout shift
+      const scrollBarWidth = window.innerWidth - document.documentElement.clientWidth;
+      document.body.style.overflow = 'hidden';
+      if (scrollBarWidth > 0) document.body.style.paddingRight = `${scrollBarWidth}px`;
+
+      return () => {
+        document.body.style.overflow = prevOverflow || '';
+        document.body.style.paddingRight = prevPaddingRight || '';
+      };
+    }
+    return undefined;
+  }, [showModal]);
 
   // -------------------------
   // UI
@@ -515,9 +597,10 @@ function ProgramDetails() {
               <button
                 type="button"
                 onClick={handleReview}
-                className="px-6 py-2 rounded-md bg-blue-800 text-white hover:bg-blue-700"
+                disabled={draftLoading}
+                className={`px-6 py-2 rounded-md bg-blue-800 text-white hover:bg-blue-700 ${draftLoading ? 'opacity-60 cursor-not-allowed' : ''}`}
               >
-                Review Application
+                {draftLoading ? 'Loading draft...' : 'Review Application'}
               </button>
             );
           })()}
@@ -527,9 +610,9 @@ function ProgramDetails() {
       {/* Review Modal */}
       {showModal && (
         <div className="fixed inset-0 bg-black bg-opacity-50 flex justify-center items-center p-4 z-50">
-          <div className="bg-white rounded-xl p-6 max-w-3xl w-full">
+          <div className="bg-white rounded-xl p-6 max-w-4xl w-full max-h-[90vh] overflow-hidden">
             <h2 className="text-2xl font-bold text-blue-800 mb-4">Review Your Application</h2>
-            <div className="max-h-96 overflow-y-auto space-y-4 border-t border-b py-4">
+            <div className="max-h-[70vh] overflow-y-auto space-y-4 border-t border-b py-4">
               <div>
                 <h3 className="font-semibold text-blue-700">Personal Info</h3>
                 <p><strong>Name:</strong> {formData.fullName}</p>
@@ -543,12 +626,75 @@ function ProgramDetails() {
                 <h3 className="font-semibold text-blue-700">Documents</h3>
                 <table className="w-full text-left text-sm">
                   <tbody>
-                    {Object.keys(initialFormData).map((key) => {
-                      if (!formData[key]) return null;
-                      if (key === "picture") return <tr key={key}><td>{formData[key].name}</td></tr>;
-                      if (Array.isArray(formData[key])) return formData[key].map((f, idx) => <tr key={idx}><td>{f.name}</td></tr>);
-                      return formData[key].name ? <tr key={key}><td>{formData[key].name}</td></tr> : null;
-                    })}
+                    {(() => {
+                      // Only show document fields here (exclude personal info fields)
+                      const docKeys = [
+                        'letterOfIntent',
+                        'resume',
+                        'picture',
+                        'applicationForm',
+                        'recommendationLetter',
+                        'schoolCredentials',
+                        'highSchoolDiploma',
+                        'transcript',
+                        'birthCertificate',
+                        'employmentCertificate',
+                        'nbiClearance',
+                        'marriageCertificate',
+                        'businessRegistration',
+                        'certificates',
+                      ];
+
+                      const labels = {
+                        letterOfIntent: 'Letter of Intent',
+                        resume: 'Résumé / CV',
+                        picture: 'Formal Picture',
+                        applicationForm: 'ETEEAP Application Form',
+                        recommendationLetter: 'Recommendation Letter',
+                        schoolCredentials: 'School Credentials',
+                        highSchoolDiploma: 'High School Diploma / PEPT',
+                        transcript: 'Transcript',
+                        birthCertificate: 'Birth Certificate',
+                        employmentCertificate: 'Certificate of Employment',
+                        nbiClearance: 'NBI Clearance',
+                        marriageCertificate: 'Marriage Certificate',
+                        businessRegistration: 'Business Registration',
+                        certificates: 'Certificates',
+                      };
+
+                      const nameFor = (v) => {
+                        if (!v) return null;
+                        if (typeof v === 'string') return v.split('/').pop();
+                        return v.name || null;
+                      };
+
+                      return docKeys.map((key) => {
+                        const val = formData[key];
+                        if (!val) return null;
+
+                        if (Array.isArray(val)) {
+                          return (
+                            <tr key={key}>
+                              <td>
+                                <strong>{labels[key] || key}:</strong>
+                                <ul className="list-disc list-inside mt-1">
+                                  {val.map((f, idx) => (
+                                    <li key={idx}>{nameFor(f) || `File ${idx + 1}`}</li>
+                                  ))}
+                                </ul>
+                              </td>
+                            </tr>
+                          );
+                        }
+
+                        const nm = nameFor(val);
+                        return nm ? (
+                          <tr key={key}>
+                            <td><strong>{labels[key] || key}:</strong> {nm}</td>
+                          </tr>
+                        ) : null;
+                      });
+                    })()}
                   </tbody>
                 </table>
               </div>
@@ -557,7 +703,7 @@ function ProgramDetails() {
               <div className="mt-6 flex justify-end gap-4">
               <button onClick={() => setShowModal(false)} className="px-4 py-2 rounded-md border">Edit</button>
               <button onClick={handleSaveDraft} className="px-6 py-2 rounded-md bg-gray-400 text-white hover:bg-gray-500">Save Draft</button>
-              <button onClick={handleSubmit} className="px-6 py-2 rounded-md bg-blue-800 text-white">Submit</button>
+              <button onClick={handleSubmit} disabled={draftLoading} className={`px-6 py-2 rounded-md bg-blue-800 text-white ${draftLoading ? 'opacity-60 cursor-not-allowed' : ''}`}>{draftLoading ? 'Loading...' : 'Submit'}</button>
             </div>
           </div>
         </div>
