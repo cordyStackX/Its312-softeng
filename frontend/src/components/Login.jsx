@@ -26,10 +26,10 @@ const Login = () => {
 
   const logActivity = async (action, userId = "GUEST") => {
     try {
-      await fetch("http://localhost:5000/activity/log", {
+      await fetch("http://localhost:5000/log_activity", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ user_id: userId, action }),
+        body: JSON.stringify({ action, details: { user_id: userId } }),
       });
     } catch (err) {
       console.error("Activity log failed:", err);

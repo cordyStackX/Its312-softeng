@@ -61,10 +61,10 @@ const Signup = () => {
   // --------------------------
   const logSignupActivity = async (email) => {
     try {
-      await fetch("http://localhost:5000/activity/signup", {
+      await fetch("http://localhost:5000/log_activity", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ email }),
+        body: JSON.stringify({ action: 'signup', details: { email } }),
       });
     } catch (err) {
       console.error("Activity Signup Error:", err);

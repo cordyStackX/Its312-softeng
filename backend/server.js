@@ -101,8 +101,9 @@ app.post('/log_activity', async (req, res) => {
   try {
     const { action, details } = req.body || {};
     const userId = req.user?.id || req.headers['x-user-id'] || null;
-    await logActivity(userId, 'client', action || 'log', details || '');
-    res.json({ message: 'Logged' });
+    // Client-side activity logging is intentionally not persisted to the central activity log
+    // to ensure only admin actions are recorded for audit purposes.
+    res.json({ message: 'Received' });
   } catch (err) {
     console.error('log_activity error', err);
     res.status(500).json({ message: 'Failed to log activity' });
@@ -116,3 +117,62 @@ app.use((req, res) => res.status(404).json({ message: "Route not found" }));
 app.listen(port, () => 
   console.log(`🚀 Server running on http://localhost:${port}`)
 );
+
+// Ensure trash table exists and purge old trashed items daily
+(async () => {
+  try {
+    await db.query(`
+      CREATE TABLE IF NOT EXISTS applications_trash (
+        id INT AUTO_INCREMENT PRIMARY KEY,
+        original_id INT,
+        program_name VARCHAR(255),
+        full_name VARCHAR(255),
+        email VARCHAR(255),
+        phone VARCHAR(100),
+        marital_status VARCHAR(100),
+        is_business_owner TINYINT(1),
+        business_name VARCHAR(255),
+        letter_of_intent VARCHAR(255),
+        resume VARCHAR(255),
+        picture VARCHAR(255),
+        application_form VARCHAR(255),
+        recommendation_letter VARCHAR(255),
+        school_credentials VARCHAR(255),
+        high_school_diploma VARCHAR(255),
+        transcript VARCHAR(255),
+        birth_certificate VARCHAR(255),
+        employment_certificate VARCHAR(255),
+        nbi_clearance VARCHAR(255),
+        marriage_certificate VARCHAR(255),
+        business_registration VARCHAR(255),
+        certificates VARCHAR(255),
+        created_at DATETIME,
+        resume_status VARCHAR(50),
+        resume_remark VARCHAR(255),
+        status VARCHAR(50),
+        data LONGTEXT,
+        deleted_at DATETIME,
+        INDEX (deleted_at)
+      ) ENGINE=InnoDB;
+    `);
+
+    const purgeOld = async () => {
+      try {
+        const [result] = await db.query("DELETE FROM applications_trash WHERE deleted_at < (NOW() - INTERVAL 30 DAY)");
+        if (result && result.affectedRows) {
+          console.log(`Purged ${result.affectedRows} trashed applications older than 30 days`);
+        }
+      } catch (e) {
+        console.error('Error purging old trashed applications', e);
+      }
+    };
+
+    // Run once on startup
+    await purgeOld();
+    // Schedule daily purge (24h)
+    setInterval(purgeOld, 24 * 60 * 60 * 1000);
+  } catch (err) {
+    console.error('Failed to ensure applications_trash table or start purge job', err);
+  }
+})();
+ 

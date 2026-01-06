@@ -1,11 +1,11 @@
 import React, { useState, useEffect } from "react";
-import { Download } from "lucide-react";
+// Removed CSV export (security / audit requirement)
 import axios from "axios";
+axios.defaults.withCredentials = true;
 
 function AdminActivityLog() {
   const [search, setSearch] = useState("");
-  const [filterAction, setFilterAction] = useState("All");
-  const [availableActions, setAvailableActions] = useState([]);
+  const [actionCategory, setActionCategory] = useState("All");
   const [filterDate, setFilterDate] = useState("");
   const [logs, setLogs] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -25,16 +25,16 @@ function AdminActivityLog() {
         const safeLogs = (response.data || []).map((log) => ({
           id: log.id,
           date: log.date || "",
+          user_id: log.user_id || null,
           user: log.user || "Unknown User",
+          role: (log.role || "").toString().toLowerCase(),
           action: log.action || "",
           details: log.details || "",
         }));
 
         setLogs(safeLogs);
 
-        // Build unique action list for filtering
-        const actions = Array.from(new Set(safeLogs.map(l => l.action).filter(Boolean))).sort();
-        setAvailableActions(actions);
+        // no per-action dropdown; filtering uses category/search/date only
       } catch (err) {
         console.error("Error fetching activity logs:", err);
         setLogs([]);
@@ -52,22 +52,38 @@ function AdminActivityLog() {
       log.user.toLowerCase().includes(search.toLowerCase()) ||
       log.action.toLowerCase().includes(search.toLowerCase()) ||
       log.details.toLowerCase().includes(search.toLowerCase());
-    const m2 = filterAction === "All" || log.action === filterAction;
+  const m2 = true;
     const m3 = filterDate ? log.date.includes(filterDate) : true;
-    return m1 && m2 && m3;
+    // Category filtering (preset groups)
+    const cat = actionCategory;
+    let m5 = true;
+    if (cat === "accept") {
+      m5 = /\baccept(ed)?\b/i.test(log.action) && !/\breject(ed)?\b/i.test(log.action);
+    } else if (cat === "reject") {
+      m5 = /\breject(ed)?\b/i.test(log.action) && !/\baccept(ed)?\b/i.test(log.action);
+    } else if (cat === "verify") {
+      m5 = /verify/i.test(log.action) && !/unverify/i.test(log.action);
+    } else if (cat === "unverify") {
+      m5 = /unverify|unverified/i.test(log.action);
+    } else if (cat === "delete") {
+      m5 = /delete|removed|deleted/i.test(log.action);
+    } else if (cat === "remark") {
+      m5 = /remark|remarked|add_document_remark/i.test(log.action);
+    } else if (cat === "restore") {
+      m5 = /restore|restored/i.test(log.action);
+    } else if (cat === "login") {
+      m5 = /\blogin\b|admin login/i.test(log.action);
+    } else if (cat === "create_admin") {
+      m5 = /create_admin|create admin/i.test(log.action);
+    } else if (cat === "update_profile") {
+      m5 = /update_profile|update profile/i.test(log.action);
+    } else if (cat === "update_profile_picture") {
+      m5 = /update_profile_picture|profile picture|update picture/i.test(log.action);
+    }
+
+    return m1 && m2 && m3 && m5;
   });
 
-  // --- Export CSV ---
-  function exportCSV() {
-    const rows = [["Date", "User", "Action", "Details"]];
-    filtered.forEach((r) => rows.push([r.date, r.user, r.action, r.details]));
-    const csv = rows.map((r) => r.join(",")).join("\n");
-    const blob = new Blob([csv], { type: "text/csv" });
-    const a = document.createElement("a");
-    a.href = URL.createObjectURL(blob);
-    a.download = "activity_logs.csv";
-    a.click();
-  }
 
   if (loading) {
     return <div className="p-4 text-center">Loading activity logs...</div>;
@@ -87,14 +103,27 @@ function AdminActivityLog() {
           onChange={(e) => setSearch(e.target.value)}
         />
 
+
+
         <select
-          className="border px-3 py-2 rounded-lg shadow-sm min-w-[150px] w-full sm:w-auto"
-          value={filterAction}
-          onChange={(e) => setFilterAction(e.target.value)}
+          className="border px-3 py-2 rounded-lg shadow-sm min-w-[140px] w-full sm:w-auto"
+          value={actionCategory}
+          onChange={(e) => setActionCategory(e.target.value)}
         >
-          <option>All</option>
-          {availableActions.map(a => <option key={a}>{a}</option>)}
+          <option value="All">All</option>
+          <option value="accept">Accept</option>
+          <option value="reject">Reject</option>
+          <option value="verify">Verify</option>
+          <option value="unverify">Unverify</option>
+          <option value="delete">Delete</option>
+          <option value="remark">Add Remark</option>
+          <option value="restore">Restore</option>
+          <option value="login">Login</option>
+          <option value="create_admin">Create Admin</option>
+          <option value="update_profile">Update Profile</option>
+          <option value="update_profile_picture">Update Profile Picture</option>
         </select>
+
 
         <input
           type="date"
@@ -103,13 +132,7 @@ function AdminActivityLog() {
           onChange={(e) => setFilterDate(e.target.value)}
         />
 
-        <button
-          onClick={exportCSV}
-          className="flex items-center gap-2 bg-blue-700 text-white px-4 py-2 rounded-lg hover:bg-blue-600 transition w-full sm:w-auto justify-center"
-        >
-          <Download size={16} />
-          Export CSV
-        </button>
+        {/* CSV export disabled — audit logs are admin-only and not exportable from UI */}
       </div>
 
       {/* Table for medium and up screens */}

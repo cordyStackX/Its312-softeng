@@ -24,8 +24,6 @@ function AdminDashboard() {
     pendingVerifications: 0,
     accepted: 0,
     rejected: 0,
-    docsAwaiting: 0,
-    incompleteRequirements: 0,
     programDistribution: [],
     monthlyApplicants: [],
   });
@@ -126,11 +124,9 @@ function AdminDashboard() {
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6 gap-4 mb-6">
               {[
                 { label: "Total Applicants", value: stats.totalApplicants, color: "blue-800" },
-                { label: "Pending Verifications", value: stats.pendingVerifications, color: "yellow-500" },
-                { label: "Incomplete Requirements", value: stats.incompleteRequirements, color: "indigo-600" },
+                { label: "Pending", value: stats.pendingVerifications, color: "yellow-500" },
                 { label: "Accepted", value: stats.accepted, color: "green-600" },
                 { label: "Rejected", value: stats.rejected, color: "red-600" },
-                { label: "Docs Awaiting Review", value: stats.docsAwaiting, color: "sky-600" },
               ].map(stat => (
                 <div key={stat.label} className={`bg-white rounded-xl shadow p-4 border-l-4 border-${stat.color}`}>
                   <div className="text-sm text-gray-500">{stat.label}</div>
@@ -155,7 +151,7 @@ function AdminDashboard() {
                       <XAxis dataKey="month" />
                       <YAxis />
                       <Tooltip />
-                      <Bar dataKey="count" fill="#8884d8" />
+                      <Bar dataKey="count" fill="#4f46e5" barSize={18} />
                     </BarChart>
                   </ResponsiveContainer>
                 )}
@@ -164,31 +160,45 @@ function AdminDashboard() {
               {/* Program Distribution */}
               <div className="bg-white rounded-xl shadow p-6">
                 <h3 className="text-lg font-semibold text-blue-800 mb-3">Program Distribution</h3>
-                {stats.programDistribution.length === 0 ? (
-                  <div className="h-44 bg-gray-50 rounded flex items-center justify-center text-gray-400 text-xs">
-                    No data
-                  </div>
-                ) : (
-                  <ResponsiveContainer width="100%" height={180}>
-                    <PieChart>
-                      <Pie
-                        data={stats.programDistribution}
-                        dataKey="count"
-                        nameKey="program"
-                        cx="50%"
-                        cy="50%"
-                        outerRadius={60}
-                        label
-                      >
-                        {stats.programDistribution.map((entry, index) => (
-                          <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
-                        ))}
-                      </Pie>
-                      <Tooltip />
-                      <Legend />
-                    </PieChart>
-                  </ResponsiveContainer>
-                )}
+                {(() => {
+                  const programData = (stats.programDistribution || []).filter(e => {
+                    const name = (e.program || '').toString();
+                    if (!name) return false;
+                    if (['Incomplete requirements', 'Docs Awaiting Review', 'Awaiting review'].includes(name)) return false;
+                    return Number(e.count) > 0;
+                  });
+
+                  if (!programData || programData.length === 0) {
+                    return (
+                      <div className="h-44 bg-gray-50 rounded flex items-center justify-center text-gray-400 text-xs">
+                        No data
+                      </div>
+                    );
+                  }
+
+                  return (
+                    <ResponsiveContainer width="100%" height={180}>
+                      <PieChart>
+                        <Pie
+                          data={programData}
+                          dataKey="count"
+                          nameKey="program"
+                          cx="50%"
+                          cy="50%"
+                          innerRadius={30}
+                          outerRadius={60}
+                          label
+                        >
+                          {programData.map((entry, index) => (
+                            <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
+                          ))}
+                        </Pie>
+                        <Tooltip />
+                        <Legend />
+                      </PieChart>
+                    </ResponsiveContainer>
+                  );
+                })()}
               </div>
             </div>
 

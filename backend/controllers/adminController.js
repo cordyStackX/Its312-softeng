@@ -82,7 +82,10 @@ export const updateApplicationStatus = async (req, res) => {
     const [rows] = await db.query(`SELECT * FROM applications WHERE id = ?`, [applicationId]);
 
     // Log the admin action
-    await logActivity(req.user?.id || req.headers["x-user-id"], "admin", "update_application_status", `Set application ${applicationId} status to ${normalized}`);
+    // Require authenticated admin and log the admin action
+    const adminId = req.user?.id;
+    if (!adminId) return res.status(401).json({ message: "Unauthorized" });
+    await logActivity(adminId, "admin", "update_application_status", `Set application ${applicationId} status to ${normalized}`);
 
     res.json(rows[0]);
   } catch (err) {
@@ -158,8 +161,10 @@ export const updateDocumentStatus = async (req, res) => {
     const [rows] = await db.query(`SELECT * FROM applications WHERE id = ?`, [id]);
     const updatedDoc = rows[0];
 
+    const adminId = req.user?.id;
+    if (!adminId) return res.status(401).json({ message: "Unauthorized" });
     await logActivity(
-      req.user?.id || req.headers["x-user-id"],
+      adminId,
       "admin",
       "update_document_status",
       `Updated document '${documentName}' status to '${status}' on application ${id}`
@@ -189,13 +194,108 @@ export const deleteApplication = async (req, res) => {
     );
 
     if (!rows.length) return res.status(404).json({ message: "Application not found" });
+    // Move to trash: insert into applications_trash then remove from applications
+    const app = rows[0];
+    try {
+      await db.query(
+        `INSERT INTO applications_trash (original_id, program_name, full_name, email, phone, marital_status, is_business_owner, business_name, letter_of_intent, resume, picture, application_form, recommendation_letter, school_credentials, high_school_diploma, transcript, birth_certificate, employment_certificate, nbi_clearance, marriage_certificate, business_registration, certificates, created_at, resume_status, resume_remark, status, data, deleted_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW())`,
+        [app.id, app.program_name, app.full_name, app.email, app.phone, app.marital_status, app.is_business_owner, app.business_name, app.letter_of_intent, app.resume, app.picture, app.application_form, app.recommendation_letter, app.school_credentials, app.high_school_diploma, app.transcript, app.birth_certificate, app.employment_certificate, app.nbi_clearance, app.marriage_certificate, app.business_registration, app.certificates, app.created_at, app.resume_status, app.resume_remark, app.status, JSON.stringify(app)]
+      );
+    } catch (e) {
+      console.error('Failed to move application to trash', e);
+      return res.status(500).json({ message: 'Failed to move application to trash' });
+    }
 
     await db.query("DELETE FROM applications WHERE id = ?", [id]);
 
-    res.json({ message: "Application deleted", deleted: rows[0] });
+    // Log admin trash action
+    const adminId = req.user?.id;
+    if (adminId) {
+      try {
+        await logActivity(adminId, "admin", "trash_application", `Moved application ${id} to trash (${app.email || 'no-email'})`);
+      } catch (e) { console.error('Failed to log trash action', e); }
+    }
+
+    res.json({ message: "Application moved to trash", trashed: app });
   } catch (err) {
     console.error("Error deleting application:", err);
     res.status(500).json({ message: "Server error" });
+  }
+};
+
+// ---------------------------
+// --- TRASHED APPLICATIONS ---
+// ---------------------------
+export const getTrashedApplications = async (req, res) => {
+  try {
+    const [rows] = await db.query(
+      `SELECT id, original_id, program_name, full_name, email, deleted_at, data FROM applications_trash ORDER BY deleted_at DESC`
+    );
+    // Parse JSON data safely
+    const safe = rows.map(r => ({ ...r, data: r.data ? JSON.parse(r.data) : null }));
+    res.json(safe);
+  } catch (err) {
+    console.error('Error fetching trashed applications', err);
+    res.status(500).json({ message: 'Server error' });
+  }
+};
+
+export const restoreTrashedApplication = async (req, res) => {
+  try {
+    const { id } = req.params; // trash table id
+    const [[row]] = await db.query('SELECT * FROM applications_trash WHERE id = ?', [id]);
+    if (!row) return res.status(404).json({ message: 'Trashed item not found' });
+
+    // Attempt to restore original id if free; otherwise insert and return new id
+    const originalId = row.original_id;
+    // Check conflict
+    const [conflict] = await db.query('SELECT id FROM applications WHERE id = ?', [originalId]);
+    if (conflict.length === 0 && originalId) {
+      // Insert with original id
+      await db.query(
+        `INSERT INTO applications (id, program_name, full_name, email, phone, marital_status, is_business_owner, business_name, letter_of_intent, resume, picture, application_form, recommendation_letter, school_credentials, high_school_diploma, transcript, birth_certificate, employment_certificate, nbi_clearance, marriage_certificate, business_registration, certificates, created_at, resume_status, resume_remark, status)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        [row.original_id, row.program_name, row.full_name, row.email, row.phone, row.marital_status, row.is_business_owner, row.business_name, row.letter_of_intent, row.resume, row.picture, row.application_form, row.recommendation_letter, row.school_credentials, row.high_school_diploma, row.transcript, row.birth_certificate, row.employment_certificate, row.nbi_clearance, row.marriage_certificate, row.business_registration, row.certificates, row.created_at, row.resume_status, row.resume_remark, row.status]
+      );
+    } else {
+      // Insert without id
+      await db.query(
+        `INSERT INTO applications (program_name, full_name, email, phone, marital_status, is_business_owner, business_name, letter_of_intent, resume, picture, application_form, recommendation_letter, school_credentials, high_school_diploma, transcript, birth_certificate, employment_certificate, nbi_clearance, marriage_certificate, business_registration, certificates, created_at, resume_status, resume_remark, status)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        [row.program_name, row.full_name, row.email, row.phone, row.marital_status, row.is_business_owner, row.business_name, row.letter_of_intent, row.resume, row.picture, row.application_form, row.recommendation_letter, row.school_credentials, row.high_school_diploma, row.transcript, row.birth_certificate, row.employment_certificate, row.nbi_clearance, row.marriage_certificate, row.business_registration, row.certificates, row.created_at, row.resume_status, row.resume_remark, row.status]
+      );
+    }
+
+    // Remove from trash
+    await db.query('DELETE FROM applications_trash WHERE id = ?', [id]);
+
+    const adminId = req.user?.id;
+    if (adminId) {
+      try { await logActivity(adminId, 'admin', 'restore_application', `Restored trashed application ${id} (orig:${row.original_id})`); } catch(e){console.error('Failed to log restore', e)}
+    }
+
+    res.json({ message: 'Application restored' });
+  } catch (err) {
+    console.error('Error restoring trashed application', err);
+    res.status(500).json({ message: 'Server error' });
+  }
+};
+
+export const permanentlyDeleteTrashedApplication = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const [rows] = await db.query('SELECT * FROM applications_trash WHERE id = ?', [id]);
+    if (!rows.length) return res.status(404).json({ message: 'Trashed item not found' });
+    await db.query('DELETE FROM applications_trash WHERE id = ?', [id]);
+    const adminId = req.user?.id;
+    if (adminId) {
+      try { await logActivity(adminId, 'admin', 'permanently_delete_application', `Permanently deleted trashed application ${id}`); } catch(e){console.error('Failed to log permanent delete', e)}
+    }
+    res.json({ message: 'Trashed application permanently deleted' });
+  } catch (err) {
+    console.error('Error permanently deleting trashed application', err);
+    res.status(500).json({ message: 'Server error' });
   }
 };
 
@@ -205,7 +305,7 @@ export const deleteApplication = async (req, res) => {
 export const verifyFile = async (req, res) => {
   const applicationId = req.params.id;
   const fileKey = req.params.fileKey;
-  const adminId = req.user?.id || req.headers["x-user-id"] || null;
+  const adminId = req.user?.id || null;
   const { verified } = req.body || {};
 
   try {
@@ -310,8 +410,10 @@ export const addDocumentRemark = async (req, res) => {
       [applicationId, documentName]
     );
 
+    const adminId = req.user?.id;
+    if (!adminId) return res.status(401).json({ message: "Unauthorized" });
     await logActivity(
-      req.user?.id || req.headers["x-user-id"],
+      adminId,
       "admin",
       "add_document_remark",
       `Added remark for document '${documentName}' on application ${applicationId}: ${remark}`
@@ -329,7 +431,7 @@ export const addDocumentRemark = async (req, res) => {
 // ---------------------------
 export const getAdminProfile = async (req, res) => {
   try {
-    const userId = req.user?.id || req.headers["x-user-id"];
+    const userId = req.user?.id;
     if (!userId) return res.status(401).json({ message: "Unauthorized" });
 
     const [rows] = await db.query(
@@ -353,7 +455,7 @@ export const getAdminProfile = async (req, res) => {
 
 export const updateAdminProfile = async (req, res) => {
   try {
-    const userId = req.user?.id || req.headers["x-user-id"];
+    const userId = req.user?.id;
     if (!userId) return res.status(401).json({ message: "Unauthorized" });
 
     const { fullname, email, password } = req.body;
