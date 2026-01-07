@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React, { useState, useEffect } from "react";
 import { useNavigate } from "react-router-dom";
 import Toast from "./Toast";
 import brumaImg from "../assets/bruma.jpg";
@@ -37,6 +37,15 @@ function Programs() {
   const navigate = useNavigate();
   const user = JSON.parse(localStorage.getItem("user"));
   const [toast, setToast] = useState(null);
+
+  // Scroll to top when Programs mounts so navigations (e.g. after submit) land at the top
+  useEffect(() => {
+    try {
+      window.scrollTo({ top: 0, left: 0, behavior: "auto" });
+    } catch (e) {
+      // ignore in non-browser environments
+    }
+  }, []);
 
   const handleApply = async (programName) => {
     if (!user) {

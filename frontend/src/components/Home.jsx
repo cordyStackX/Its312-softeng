@@ -46,6 +46,15 @@ const Home = () => {
     });
   }, []);
 
+  // Ensure home page is scrolled to top when mounted (fixes leftover scroll position after logout/navigation)
+  useEffect(() => {
+    try {
+      window.scrollTo({ top: 0, left: 0, behavior: "auto" });
+    } catch (e) {
+      // ignore
+    }
+  }, []);
+
   const user = JSON.parse(localStorage.getItem("user"));
 
   return (

@@ -22,6 +22,16 @@ function ProgramDetails() {
   const navigate = useNavigate();
   const { programName } = location.state || { programName: "" };
 
+  // Ensure the page is scrolled to the top when this component mounts or when the program changes
+  // (fixes the issue where clicking "Apply" while scrolled down keeps the previous scroll position)
+  useEffect(() => {
+    try {
+      window.scrollTo({ top: 0, left: 0, behavior: "auto" });
+    } catch (e) {
+      // ignore in non-browser environments
+    }
+  }, [programName]);
+
   const initialFormData = {
     fullName: "",
     email: "",
@@ -199,14 +209,15 @@ function ProgramDetails() {
   };
 
   const handleReview = (e) => {
-    // guard against being called without an event (e.g. programmatically)
     if (e && e.preventDefault) e.preventDefault();
+    // if a draft is being loaded, mark pending so we'll navigate after load finishes
     if (draftLoading) {
-      // if a draft is being loaded, set pending so we'll open after load finishes
       setPendingOpenReview(true);
       return;
     }
-    setShowModal(true);
+
+    // navigate to the dedicated review page and pass current form state
+    navigate("/review-application", { state: { formData, draftId, programName } });
   };
 
   // -------------------------
@@ -441,25 +452,27 @@ function ProgramDetails() {
     }
   }, [location.state]);
 
-  // Auto-open review modal if navigated with { openReview: true } or { review: true } in location.state
+  // Auto-open review page if navigated with { openReview: true } or { review: true } in location.state
   useEffect(() => {
     const openReview = location.state?.openReview || location.state?.review;
     if (openReview) {
-      // if draft is still loading, defer opening until load finishes
-      if (draftLoading) setPendingOpenReview(true);
-      else setShowModal(true);
-      // clear the state so returning/back doesn't reopen the modal unintentionally
+      if (draftLoading) {
+        setPendingOpenReview(true);
+      } else {
+        navigate("/review-application", { state: { formData, draftId, programName } });
+      }
+      // clear the state so returning/back doesn't reopen unintentionally
       navigate(location.pathname, { replace: true });
     }
-  }, [location.state, navigate, location.pathname, draftLoading]);
+  }, [location.state, navigate, location.pathname, draftLoading, formData, draftId, programName]);
 
-  // When draft load finishes, open the review modal if it was requested while loading
+  // When draft load finishes, navigate to the review page if it was requested while loading
   useEffect(() => {
     if (!draftLoading && pendingOpenReview) {
       setPendingOpenReview(false);
-      setShowModal(true);
+      navigate("/review-application", { state: { formData, draftId, programName } });
     }
-  }, [draftLoading, pendingOpenReview]);
+  }, [draftLoading, pendingOpenReview, navigate, formData, draftId, programName]);
 
   // Prevent background scrolling when the review modal is open
   useEffect(() => {

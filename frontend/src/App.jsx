@@ -1,4 +1,4 @@
-import React from "react";
+import React, { useEffect } from "react";
 import { BrowserRouter as Router, Routes, Route, useLocation } from "react-router-dom";
 import { CSSTransition, TransitionGroup } from "react-transition-group";
 import Navbar from "./components/Navbar";
@@ -20,12 +20,22 @@ import Notifications from "./components/Notifications";
 import ApplicationDetails from "./components/ApplicationDetails";
 import MyDrafts from "./components/MyDrafts";
 import MyApplication from "./components/MyApplication"; // New import for MyApplication
+import ReviewApplication from "./components/ReviewApplication";
 
 // User Context
 import { UserProvider } from "./components/UserContext";
 
 function AnimatedRoutes() {
   const location = useLocation();
+
+  // Always scroll to top when the route changes (ensures navbar links always show content from top)
+  useEffect(() => {
+    try {
+      window.scrollTo({ top: 0, left: 0, behavior: "auto" });
+    } catch (e) {
+      // ignore in non-browser environments
+    }
+  }, [location.pathname]);
 
   // ref used by CSSTransition to avoid findDOMNode (StrictMode safe)
   const nodeRef = React.useRef(null);
@@ -44,6 +54,7 @@ function AnimatedRoutes() {
               <Route path="/about" element={<About />} />
               <Route path="/program-details" element={<ProgramDetails />} />
               <Route path="/programs" element={<Programs />} />
+              <Route path="/review-application" element={<ReviewApplication />} />
               <Route path="/my-drafts" element={<MyDrafts />} />
               <Route path="/faqs" element={<FAQ />} />
 

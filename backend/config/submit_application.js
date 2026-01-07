@@ -58,19 +58,29 @@ router.post("/", cpUpload, async (req, res) => {
     const body = req.body;
     const files = req.files || {};
 
+    // Map uploaded files early so draft conversion can reuse them
+    const filePaths = {};
+    Object.keys(files).forEach((key) => {
+      // normalize backslashes to forward slashes for consistent URLs
+      filePaths[key] = files[key][0]?.path ? files[key][0].path.replace(/\\/g, "/") : null;
+    });
+
     // Resolve user ID (session preferred, header fallback)
     const userId = resolveUserId(req);
     if (!userId) return res.status(401).json({ message: "Unauthorized: Missing user ID" });
 
     // Block admins from submitting applications
     const [[userRow]] = await db.query("SELECT role FROM users WHERE id = ? LIMIT 1", [userId]);
+    console.log('User role lookup result:', userRow);
     if (userRow && userRow.role === 'admin') return res.status(403).json({ message: "Admins cannot submit applications" });
 
     // If this request includes a draft_id, attempt to convert that draft into a submitted application
     if (body.draft_id) {
       const draftId = body.draft_id;
+      console.log('Attempting to convert draft id=', draftId, 'for userId=', userId);
       // Ensure draft exists and is owned by this user
       const [rows] = await db.query(`SELECT * FROM applications WHERE id = ? AND user_id = ? AND status = 'Draft' LIMIT 1`, [draftId, userId]);
+      console.log('Draft lookup rows:', rows);
       if (!rows.length) return res.status(404).json({ message: 'Draft not found or not owned by user' });
 
       // Build update similar to save-draft but set status to Pending (or Submitted)
@@ -90,7 +100,9 @@ router.post("/", cpUpload, async (req, res) => {
       fields.push("status = ?"); values.push('Pending');
 
       values.push(draftId);
+      console.log('About to run UPDATE with fields:', fields, 'values:', values);
       const [result] = await db.query(`UPDATE applications SET ${fields.join(", ")} WHERE id = ?`, values);
+      console.log('UPDATE result:', result);
       if (result.affectedRows === 0) return res.status(500).json({ message: 'Failed to submit draft' });
 
       // Return success
@@ -103,44 +115,41 @@ router.post("/", cpUpload, async (req, res) => {
       return res.status(409).json({ message: "Only one submitted application allowed per account" });
     }
 
-    // Map uploaded files
-    const filePaths = {};
-    Object.keys(files).forEach((key) => {
-      filePaths[key] = files[key][0]?.path || null;
-    });
-
-    // Insert into applications table including user_id
+    // Insert into applications table including user_id, set status to 'Pending' so admins see it immediately
+    console.log('Inserting new application, filePaths:', filePaths);
+    const insertValues = [
+      userId,
+      body.program_name,
+      body.full_name,
+      body.email,
+      body.phone,
+      body.marital_status,
+      body.is_business_owner,
+      body.business_name || null,
+      filePaths.letter_of_intent,
+      filePaths.resume,
+      filePaths.picture,
+      filePaths.application_form,
+      filePaths.recommendation_letter,
+      filePaths.school_credentials,
+      filePaths.high_school_diploma,
+      filePaths.transcript,
+      filePaths.birth_certificate,
+      filePaths.employment_certificate,
+      filePaths.nbi_clearance,
+      filePaths.marriage_certificate,
+      filePaths.business_registration,
+      filePaths.certificates,
+    ];
+    console.log('Insert values count:', insertValues.length, 'values:', insertValues.map(v => v ? v.toString().slice(0,80) : v));
     const [result] = await db.query(
       `INSERT INTO applications
       (user_id, program_name, full_name, email, phone, marital_status, is_business_owner, business_name,
        letter_of_intent, resume, picture, application_form, recommendation_letter,
        school_credentials, high_school_diploma, transcript, birth_certificate,
-       employment_certificate, nbi_clearance, marriage_certificate, business_registration, certificates)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      [
-        userId,
-        body.program_name,
-        body.full_name,
-        body.email,
-        body.phone,
-        body.marital_status,
-        body.is_business_owner,
-        body.business_name || null,
-        filePaths.letter_of_intent,
-        filePaths.resume,
-        filePaths.picture,
-        filePaths.application_form,
-        filePaths.recommendation_letter,
-        filePaths.school_credentials,
-        filePaths.high_school_diploma,
-        filePaths.transcript,
-        filePaths.birth_certificate,
-        filePaths.employment_certificate,
-        filePaths.nbi_clearance,
-        filePaths.marriage_certificate,
-        filePaths.business_registration,
-        filePaths.certificates,
-      ]
+       employment_certificate, nbi_clearance, marriage_certificate, business_registration, certificates, status)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'Pending')`,
+      insertValues
     );
 
     // Return application ID for notifications tracking
@@ -323,6 +332,28 @@ router.delete('/drafts/:id', async (req, res) => {
   } catch (err) {
     console.error('Error deleting draft:', err);
     res.status(500).json({ message: 'Server error while deleting draft' });
+  }
+});
+
+// Submit a draft directly (minimal endpoint used by frontend when draft has only server-side file paths)
+router.post('/submit-draft', async (req, res) => {
+  try {
+    const { draft_id } = req.body || {};
+    const userId = resolveUserId(req);
+    if (!userId) return res.status(401).json({ message: 'Unauthorized' });
+    if (!draft_id) return res.status(400).json({ message: 'draft_id required' });
+
+    // Ensure draft exists and is owned by user
+    const [rows] = await db.query(`SELECT * FROM applications WHERE id = ? AND user_id = ? AND status = 'Draft' LIMIT 1`, [draft_id, userId]);
+    if (!rows.length) return res.status(404).json({ message: 'Draft not found or not owned by user' });
+
+    const [result] = await db.query(`UPDATE applications SET status = 'Pending' WHERE id = ? AND user_id = ?`, [draft_id, userId]);
+    if (result.affectedRows === 0) return res.status(500).json({ message: 'Failed to submit draft' });
+
+    return res.json({ message: 'Draft submitted successfully', applicationId: draft_id });
+  } catch (err) {
+    console.error('Submit-draft error:', err);
+    res.status(500).json({ message: 'Server error while submitting draft' });
   }
 });
 

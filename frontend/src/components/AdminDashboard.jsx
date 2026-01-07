@@ -259,7 +259,7 @@ function AdminDashboard() {
           ))}
         </nav>
         <div className="mt-auto p-3">
-          <button onClick={() => { localStorage.removeItem("user"); window.location.href="/login"; }}
+          <button onClick={() => { localStorage.removeItem("user"); window.location.href="/"; }}
             className="w-full flex items-center gap-3 p-2 rounded bg-blue-700 hover:bg-blue-600">
             <LogOut size={18} /> {sidebarOpen && <span>Logout</span>}
           </button>

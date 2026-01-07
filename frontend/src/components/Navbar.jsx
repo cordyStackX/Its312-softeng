@@ -19,7 +19,13 @@ function Navbar() {
 
   const handleLogout = () => {
     localStorage.removeItem("user");
-    navigate("/login");
+    // Navigate to home and ensure scroll is at top (fixes leftover scroll position after logout)
+    navigate("/", { replace: true });
+    try {
+      window.scrollTo({ top: 0, left: 0, behavior: "auto" });
+    } catch (e) {
+      // ignore in non-browser environments
+    }
   };
 
   const toggleMobile = () => setMobileOpen((v) => !v);

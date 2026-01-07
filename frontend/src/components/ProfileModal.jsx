@@ -11,8 +11,14 @@ function ProfileModal({ user, onClose }) {
   const handleLogout = () => {
     localStorage.removeItem("user");
     onClose();
-    navigate("/login");
-  };
+    // Go to home after logout and ensure viewport is at the top
+    navigate("/", { replace: true });
+    try {
+      window.scrollTo({ top: 0, left: 0, behavior: "auto" });
+    } catch (e) {
+      // ignore
+    }
+  }; 
 
   const getProfileImageUrl = (path) => {
     if (!path) return null;
